@@ -46,7 +46,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::Game.Network.NetworkManager
   serverHost: 165.22.79.248
   serverPort: 9000
-  webSocketHost: ws.paperio-demo.info
+  webSocketHost: turbo-happiness-gxq656pwrpg5fwjxg-9001.app.github.dev
   webSocketPort: 443
   playerName: 
   roomCode: demo-paperio
