@@ -28,6 +28,7 @@ var PeerBridgePlugin = {
         load: function (cb) {
             if (window.Peer) { cb(true); return; }
             var urls = [
+                "TemplateData/peerjs.min.js", // shipped with the game
                 "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js",
                 "https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"
             ];
@@ -78,6 +79,7 @@ var PeerBridgePlugin = {
                 if (pb.retryTimer) { clearTimeout(pb.retryTimer); pb.retryTimer = null; }
                 pb.hostTries = 0;
                 pb.everOpen = true;
+                pb.error = "";
                 if (pb.status !== 4) pb.status = 2; // keep "connected" if the friend is already here
             });
             p.on("connection", function (c) {
@@ -88,31 +90,31 @@ var PeerBridgePlugin = {
             p.on("disconnected", function () {
                 console.log("[pb] host disconnected");
                 if (pb.peer !== p) return;
-                if (pb.status === 2) pb.status = 9;
+                if (pb.status === 2 || pb.status === 1) pb.status = 9;
                 pb.scheduleHostRetry(false, 300);
             });
             p.on("close", function () {
                 console.log("[pb] host peer closed");
                 if (pb.peer !== p) return;
-                if (pb.status === 2) pb.status = 9;
+                if (pb.status === 2 || pb.status === 1) pb.status = 9;
                 pb.scheduleHostRetry(true, 300);
             });
             p.on("error", function (e) {
                 console.log("[pb] host error", e && e.type);
                 if (pb.peer !== p) return;
+                pb.error = (e && e.type) ? e.type : "error";
                 if (e.type === "unavailable-id") {
                     // first attempt: the code is really taken. Later: the server still holds our old session.
-                    if (!pb.everOpen && pb.hostTries === 0) { pb.error = e.type; pb.status = 7; return; }
+                    if (!pb.everOpen && pb.hostTries === 0) { pb.status = 7; return; }
                     if (pb.status === 2) pb.status = 9;
                     pb.scheduleHostRetry(true, 2000);
                     return;
                 }
                 if (e.type === "network" || e.type === "server-error" || e.type === "socket-error" || e.type === "socket-closed") {
-                    if (pb.status === 2) pb.status = 9;
+                    if (pb.status === 2 || pb.status === 1) pb.status = 9;
                     pb.scheduleHostRetry(false, 1500);
                     return;
                 }
-                pb.error = e.type;
                 pb.status = 6;
             });
         },
@@ -134,8 +136,7 @@ var PeerBridgePlugin = {
                 }
                 pb.hostTries++;
                 console.log("[pb] host retry", pb.hostTries, recreate ? "recreate" : "reconnect");
-                if (!pb.everOpen && pb.hostTries > 3) { pb.error = "network"; pb.status = 6; return; }
-                if (pb.hostTries > 20) { pb.error = "network"; pb.status = 6; return; }
+                if (pb.hostTries > 12) { if (!pb.error) pb.error = "network"; pb.status = 6; return; }
                 try {
                     if (!recreate && p && p.disconnected && !p.destroyed) {
                         p.reconnect();

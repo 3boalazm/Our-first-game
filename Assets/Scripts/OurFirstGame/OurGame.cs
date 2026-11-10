@@ -128,6 +128,7 @@ public class OurGame : MonoBehaviour
     GameObject banner, playAgainBtn;
     Image menuBirdA, menuBirdB;
     Text nameMustafa, nameDoha;
+    GameObject hostRetryBtn;
 
     class FloatHeart { public RectTransform rt; public float speed, phase, x; }
     readonly List<FloatHeart> hearts = new List<FloatHeart>();
@@ -408,7 +409,9 @@ public class OurGame : MonoBehaviour
         hostStatus = UiKit.Label(hostP, "Connecting...", 40, Color.white, new Vector2(0, -125), new Vector2(900, 70), TextAnchor.MiddleCenter, false);
         UiKit.Btn(hostP, "Share Invite", Pink, new Vector2(-150, -215), new Vector2(290, 80), ShareInvite, 36);
         UiKit.Btn(hostP, "Copy Link", Teal, new Vector2(150, -215), new Vector2(250, 80), CopyLink, 36);
-        UiKit.Btn(hostP, "Back", Grey, new Vector2(0, -310), new Vector2(320, 72), ToMenu, 38);
+        UiKit.Btn(hostP, "Back", Grey, new Vector2(-170, -310), new Vector2(300, 72), ToMenu, 38);
+        hostRetryBtn = UiKit.Btn(hostP, "Try Again", Purple, new Vector2(170, -310), new Vector2(300, 72), StartHosting, 38).gameObject;
+        hostRetryBtn.SetActive(false);
     }
 
     void BuildJoin()
@@ -514,6 +517,7 @@ public class OurGame : MonoBehaviour
         roomCode = RandomCode();
         PeerNet.Start(true, roomCode);
         SetState(State.Hosting);
+        if (hostRetryBtn != null) hostRetryBtn.SetActive(false);
         RefreshHostTexts();
     }
 
@@ -786,15 +790,17 @@ public class OurGame : MonoBehaviour
                 else { Toast("Could not create a room, try again"); ToMenu(); }
                 break;
             case PeerNet.Status.Error:
-                Toast("Network problem (" + PeerNet.Error + ")");
-                ToMenu();
+                // stay on this screen and say what went wrong instead of jumping back to the menu
+                hostStatus.text = "Can't reach the room server " + Describe(PeerNet.Error);
+                hostRetryBtn.SetActive(true);
                 break;
             case PeerNet.Status.Hosting:
                 hostStatus.text = "Waiting for Doha" + Dots();
+                hostRetryBtn.SetActive(false);
                 break;
             case PeerNet.Status.Reconnecting:
-                // e.g. you switched to WhatsApp: keep the room, just re-register it
-                hostStatus.text = "Reconnecting your room" + Dots();
+                // e.g. you switched to WhatsApp, or the connection is flaky: keep the room and keep trying
+                hostStatus.text = "Reaching the room server" + Dots() + " " + Describe(PeerNet.Error);
                 break;
             case PeerNet.Status.Connected:
                 hostStatus.text = "Doha is here! Starting...";
@@ -806,6 +812,11 @@ public class OurGame : MonoBehaviour
                 hostStatus.text = "Connecting to the server" + Dots();
                 break;
         }
+    }
+
+    static string Describe(string err)
+    {
+        return string.IsNullOrEmpty(err) ? "" : "[" + err + "]";
     }
 
     string Dots()
@@ -841,11 +852,14 @@ public class OurGame : MonoBehaviour
                 joinStatus.text = "";
                 break;
             case PeerNet.Status.Error:
-                Toast("Network problem (" + PeerNet.Error + ")");
-                joinWaiting = false;
-                PeerNet.Close();
-                joinStatus.text = "";
-                break;
+                {
+                    string why = Describe(PeerNet.Error);
+                    Toast("Can't reach the room server " + why);
+                    joinWaiting = false;
+                    PeerNet.Close();
+                    joinStatus.text = "Can't reach the room server " + why + " - try again";
+                    break;
+                }
             case PeerNet.Status.Closed:
                 Toast("The room was closed");
                 joinWaiting = false;
@@ -928,6 +942,8 @@ public class OurGame : MonoBehaviour
                 // connection dropped without a goodbye
                 var st = PeerNet.Current;
                 if ((st == PeerNet.Status.Closed || st == PeerNet.Status.Error) && t > 0f) { otherLeft = true; KillOther(other); }
+                // nothing heard for a while (their phone went to sleep / lost signal)
+                else if (t > 1f && Time.unscaledTime - otherLastMsg > 8f) { otherLeft = true; KillOther(other); }
             }
 
             if (Time.unscaledTime >= nextSend)
