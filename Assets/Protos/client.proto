@@ -1,0 +1,37 @@
+syntax = "proto3";
+package game.client;
+
+message ClientMessage {
+  oneof payload {
+    JoinRoom join_room = 1;
+    LeaveRoom leave_room = 2;
+    Ready ready = 3;
+    GameMessage game_message = 4;
+    Ping ping = 5;
+    Reconnect reconnect = 6;
+  }
+  uint32 sequence = 7;
+}
+
+message JoinRoom {
+  string room_code = 1;
+  string player_name = 2;
+}
+
+message LeaveRoom {}
+
+message Ready {}
+
+message GameMessage {
+  bytes payload = 1;
+}
+
+message Ping {
+  uint64 timestamp = 1;
+  uint32 sequence = 2;
+}
+
+message Reconnect {
+  string token = 1;
+  string player_name = 2;
+}
