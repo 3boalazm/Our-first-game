@@ -1,79 +1,55 @@
-# Flappy Bird Game using Unity and C#
+# Our First Game
 
-This Flappy Bird game is a recreation of the classic arcade game developed using **Unity** and **C#**. It offers a fun and engaging gameplay experience where players control a bird through obstacles by by tapping the spacebar/ up-arrow key to flap its wings and avoid collisions.
+A two-bird flappy race for **Mustafa & Doha** — playable in the browser on phone or PC.
 
-## Gameplay Screenshots
+- **Mustafa** is the green bird, **Doha** is the pink bird with the bow and eyelashes.
+- **Play online together:** one of you creates a room and gets a 4 digit code (and an invite link),
+  the other joins with the code. You both fly through the *same* pipes at the same time.
+  Whoever crashes first keeps watching the other one fly; when both are down you see who won.
+- **Play solo** if nobody is around.
+- **Controls:** tap / click anywhere, or press Space / Up arrow.
 
-![Landing Page Screenshot](https://imgur.com/sbNBkD0.png)
-*Landing Page*
+## How the online mode works
 
-![Gamplay Screenshot](https://imgur.com/y9F0DAt.png)
-*Gameplay*
+There is no game server. The two browsers connect directly to each other (WebRTC, through
+[PeerJS](https://peerjs.com)'s free public signalling server). Both players run the same
+deterministic pipe course from a shared seed and clock, and only send their own bird's
+position and score ~15 times a second. Because of that:
 
-![Game Over Screenshot](https://imgur.com/OcAgOj9.png)
-*Game Over*
+- it is free to host (static files only, e.g. Vercel),
+- the 4 digit room code only has to be typed once,
+- if both players are behind very strict networks the direct connection may fail; a public
+  TURN relay is configured as a fallback, but it is a shared free service and can be slow.
 
-## Features
+Scores are computed on each player's device, so this is meant for friends, not competitions.
 
-#### Gameplay Mechanics
+## Project layout
 
-The game mechanics involve navigating the bird through gaps between pipes by tapping or clicking to keep the bird afloat.
+| Path | What it is |
+|---|---|
+| `Assets/Scripts/OurFirstGame/OurGame.cs` | the whole game: world, rules, UI flow, online sync |
+| `Assets/Scripts/OurFirstGame/PeerNet.cs` + `Assets/Plugins/WebGL/PeerBridge.jslib` | WebRTC link (C# wrapper + browser side) |
+| `Assets/Scripts/OurFirstGame/ProcArt.cs` | procedural art: hearts, buttons, and the pink Doha bird (recoloured from the green one) |
+| `Assets/Scripts/OurFirstGame/UiKit.cs` | small helpers to build the UI from code |
+| `Assets/Editor/OurBuild.cs` | menu **Our First Game → Build WebGL** (also usable from the command line) |
+| `Assets/WebGLTemplates/OurFirstGame/` | the web page that wraps the game (no Unity logo) |
 
-#### Scoring System
+## Build & publish
 
-Players earn points by successfully passing through gaps between pipes. The game keeps track of the score and displays it during gameplay.
+Requires **Unity 6000.3.10f1** with the **WebGL Build Support** module.
 
-#### Game Over & Restart
+1. Open the project in Unity and run the menu **Our First Game → Build WebGL**
+   (it creates the scene, applies the settings and builds into `WebBuild/`).
+2. Upload the contents of `WebBuild/` to any static host, e.g. `npx vercel deploy` from inside it.
 
-If the bird collides with any obstacles or falls to the ground, it's game over. Players can restart the game to try again.
+Command line:
 
-#### WebGL Version
-
-The game is available on GitHub Pages using WebGL technology, allowing players to access and play it directly in a web browser.
-
-
-## Accessing the Game
-
-### GitHub Pages
-
-The game is hosted on GitHub Pages using WebGL. You can play it by visiting [Game Link](https://abhie7.github.io/flappy-bird-unity/).
-
-## Installation
-
-To run the game locally or make modifications:
-
-1. Clone this repository:
-
-```bash 
-git clone https://github.com/abhie7/flappy-bird-unity.git
+```bash
+Unity -batchmode -nographics -quit -projectPath . -executeMethod OurBuild.BuildWebGL -logFile build.log
 ```
-2. Open the project in Unity.
 
-3. Make changes or run the game within the Unity editor.
+## Credits
 
-## Usage
-
-### Controls
-
-The bird is controlled by using the **spacebar** or **up arrow key**. Players can tap or press the spacebar/up arrow key to make the bird flap its wings and navigate through the pipes.
-
-Instructions:
-
-- **Spacebar**: Tap the spacebar to make the bird flap its wings.
-- **Up Arrow Key**: Alternatively, you can press the up arrow key as well.
-
-Players need to time their taps or key presses carefully to keep the bird flying and avoid collisions with the pipes.
-
-## Contribution Guidelines
-
-If you wish to contribute to this project:
-
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature/add-new-feature`).
-3. Make your changes and commit them (`git commit -am 'Add new feature'`).
-4. Push to the branch (`git push origin feature/add-new-feature`).
-5. Create a pull request.
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+Started from [abhie7/flappy-bird-unity](https://github.com/abhie7/flappy-bird-unity)
+by Abhiraj Chaudhuri (MIT License, see `LICENSE`) — the bird and background artwork and the font come
+from that project. Online play uses [PeerJS](https://peerjs.com) (MIT), loaded from a CDN at runtime.

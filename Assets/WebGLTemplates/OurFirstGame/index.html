@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#3a1d5a">
+    <title>Our First Game</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>&#x1F496;</text></svg>">
+    <style>
+      html, body {
+        margin: 0; height: 100%; overflow: hidden; background: #3a1d5a;
+        touch-action: none; overscroll-behavior: none;
+        -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #unity-canvas { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; background: #3a1d5a; outline: none; }
+      #loading {
+        position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 22px; color: #fff; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; text-align: center;
+        background: linear-gradient(160deg, #5b2a86 0%, #c04d8f 60%, #ff8fb1 100%);
+      }
+      #loading h1 { margin: 0; font-size: clamp(34px, 8vw, 72px); letter-spacing: 1px; text-shadow: 0 4px 0 rgba(40,10,60,.55); }
+      #loading p { margin: 0; font-size: clamp(18px, 4vw, 30px); opacity: .95; }
+      #bar { width: min(70vw, 420px); height: 16px; border-radius: 10px; background: rgba(255,255,255,.25); overflow: hidden; }
+      #bar > div { height: 100%; width: 0%; background: #fff; border-radius: 10px; transition: width .15s; }
+      #error { display: none; max-width: 80vw; background: rgba(0,0,0,.35); padding: 12px 18px; border-radius: 12px; font-size: 16px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <div id="loading">
+      <h1>Our First Game</h1>
+      <p>&#x1F495; Mustafa &amp; Doha &#x1F495;</p>
+      <div id="bar"><div id="bar-fill"></div></div>
+      <div id="error"></div>
+    </div>
+    <script>
+      document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+      var canvas = document.querySelector("#unity-canvas");
+      var loading = document.querySelector("#loading");
+      var fill = document.querySelector("#bar-fill");
+      var errorBox = document.querySelector("#error");
+
+      var buildUrl = "Build";
+      var config = {
+        dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+        frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+        codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "{{{ COMPANY_NAME }}}",
+        productName: "{{{ PRODUCT_NAME }}}",
+        productVersion: "{{{ PRODUCT_VERSION }}}",
+        devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+        showBanner: function (msg, type) { if (type === "error") { errorBox.style.display = "block"; errorBox.innerHTML = msg; } }
+      };
+
+      var script = document.createElement("script");
+      script.src = buildUrl + "/{{{ LOADER_FILENAME }}}";
+      script.onload = function () {
+        createUnityInstance(canvas, config, function (p) { fill.style.width = (100 * p) + "%"; })
+          .then(function () { loading.style.display = "none"; canvas.focus(); })
+          .catch(function (m) { errorBox.style.display = "block"; errorBox.textContent = String(m); });
+      };
+      script.onerror = function () { errorBox.style.display = "block"; errorBox.textContent = "Could not load the game files."; };
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>

@@ -99,3 +99,6 @@ InitTestScene*.unity*
 /[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
 
 /.idea
+# Our First Game build outputs
+/WebBuild/
+/ArtDump/
