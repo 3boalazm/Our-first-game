@@ -2,6 +2,8 @@
 
 A two-bird flappy race for **Doha & Mustafa** — playable in the browser on phone or PC.
 
+**Play it: https://ourfirstgame.doha-mustafa.workers.dev** (on a phone use *Install app* / *Add to Home Screen*).
+
 - **Doha** is the pink bird with the bow and eyelashes (she picks her colour in the menu), **Mustafa** is the green bird.
 - **Play online together:** one of you creates a room and gets a 4 digit code (and an invite link),
   the other joins with the code. You both fly through the *same* pipes at the same time.
