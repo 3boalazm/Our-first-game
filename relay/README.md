@@ -9,7 +9,12 @@ One Cloudflare Worker (free plan) does two jobs:
 
 Because the game and the relay share one address, nothing has to be configured in the game.
 
-Live address: **https://ourfirstgame.doha-mustafa.workers.dev**
+Live addresses:
+- game + relay on Cloudflare: **https://ourfirstgame.doha-mustafa.workers.dev**
+- the page people use: **https://dohaandmustafafirstgame.vercel.app** (static files on Vercel, talking to the
+  relay above - Vercel cannot hold WebSocket connections, so the relay always stays on Cloudflare)
+
+Update the Vercel site after a new Unity build with `node deploy-vercel.mjs`.
 
 ## Publish
 

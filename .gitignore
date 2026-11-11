@@ -102,3 +102,4 @@ InitTestScene*.unity*
 # Our First Game build outputs
 /WebBuild/
 /ArtDump/
+/vercel-site/
