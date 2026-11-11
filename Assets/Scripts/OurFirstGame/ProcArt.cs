@@ -95,6 +95,91 @@ public static class ProcArt
         return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
     }
 
+    /// <summary>Five-pointed golden star with a dark outline and a shine.</summary>
+    public static Sprite Star(int size)
+    {
+        var tex = NewTex(size, size);
+        var px = new Color32[size * size];
+        // star polygon: 10 vertices alternating outer / inner radius
+        var vx = new float[10];
+        var vy = new float[10];
+        for (int i = 0; i < 10; i++)
+        {
+            float ang = Mathf.PI * 0.5f + i * Mathf.PI / 5f;
+            float r = (i % 2 == 0) ? 0.92f : 0.40f;
+            vx[i] = Mathf.Cos(ang) * r;
+            vy[i] = Mathf.Sin(ang) * r - 0.04f;
+        }
+        const int ss = 3;
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float cover = 0f, inner = 0f, shine = 0f;
+                for (int sy = 0; sy < ss; sy++)
+                {
+                    for (int sx = 0; sx < ss; sx++)
+                    {
+                        float u = ((x + (sx + 0.5f) / ss) / size * 2f - 1f);
+                        float v = ((y + (sy + 0.5f) / ss) / size * 2f - 1f);
+                        if (!InPoly(vx, vy, u, v)) continue;
+                        cover += 1f;
+                        // shrink the polygon towards the centre for the outline
+                        if (InPoly(vx, vy, u * 1.14f, (v + 0.04f) * 1.14f - 0.04f)) inner += 1f;
+                        if (u < -0.02f && v > 0.05f && v < 0.55f && u > -0.5f && (u + 0.25f) * (u + 0.25f) + (v - 0.3f) * (v - 0.3f) < 0.05f) shine += 1f;
+                    }
+                }
+                float n = ss * ss;
+                cover /= n; inner /= n; shine /= n;
+                float k = (float)y / size;
+                Color fillC = Color.Lerp(new Color(1f, 0.72f, 0.12f), new Color(1f, 0.93f, 0.35f), k);
+                Color c = Color.Lerp(new Color(0.45f, 0.22f, 0.02f), fillC, inner);
+                c = Color.Lerp(c, Color.white, shine * 0.8f);
+                px[y * size + x] = new Color32((byte)(c.r * 255), (byte)(c.g * 255), (byte)(c.b * 255), (byte)(cover * 255));
+            }
+        }
+        tex.SetPixels32(px);
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
+    }
+
+    static bool InPoly(float[] vx, float[] vy, float px, float py)
+    {
+        bool inside = false;
+        for (int i = 0, j = vx.Length - 1; i < vx.Length; j = i++)
+        {
+            if (((vy[i] > py) != (vy[j] > py)) && (px < (vx[j] - vx[i]) * (py - vy[i]) / (vy[j] - vy[i]) + vx[i]))
+                inside = !inside;
+        }
+        return inside;
+    }
+
+    /// <summary>Translucent soap-bubble ring used as the shield.</summary>
+    public static Sprite Bubble(int size)
+    {
+        var tex = NewTex(size, size);
+        var px = new Color32[size * size];
+        float half = size * 0.5f;
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float dx = (x + 0.5f - half) / half, dy = (y + 0.5f - half) / half;
+                float d = Mathf.Sqrt(dx * dx + dy * dy);
+                if (d > 1f) { px[y * size + x] = new Color32(0, 0, 0, 0); continue; }
+                float edge = Mathf.Clamp01((d - 0.86f) / 0.14f);         // bright ring near the rim
+                float a = 0.16f + 0.62f * edge * edge;
+                float shine = (dx < -0.2f && dx > -0.7f && dy > 0.25f && dy < 0.7f && (dx + 0.45f) * (dx + 0.45f) + (dy - 0.48f) * (dy - 0.48f) < 0.05f) ? 0.5f : 0f;
+                a = Mathf.Clamp01(a + shine);
+                Color c = Color.Lerp(new Color(0.55f, 0.88f, 1f), Color.white, shine);
+                px[y * size + x] = new Color32((byte)(c.r * 255), (byte)(c.g * 255), (byte)(c.b * 255), (byte)(a * 255));
+            }
+        }
+        tex.SetPixels32(px);
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f);
+    }
+
     // ------------------------------------------------------------------ Doha bird
 
     /// <summary>

@@ -30,16 +30,35 @@ public class OurGame : MonoBehaviour
     const float MaxFall = -14f;
     const float BirdR = 0.50f;
     const float PipeW = 1.5f;
-    const float GapH = 3.9f;
-    const float PipeSpacing = 6.5f;
     const float FirstPipeX = 13f;
     const float FloorY = -4.55f;
     const float CeilY = 4.75f;
-    const float BaseSpeed = 4.5f;
-    const float SpeedGain = 0.04f;
-    const float MaxSpeed = 6.6f;
     const float CountdownSecs = 3.2f;
     const float SendInterval = 1f / 15f;
+
+    // ------------------------------------------------------------ difficulty levels
+    // Both players always play the level the host chose (it is sent with the round start).
+    struct Level { public string name; public float gap, spacing, baseSpeed, maxSpeed, gain; }
+    static readonly Level[] Levels =
+    {
+        // gap = the opening the bird flies through (it used to be 3.9); spacing = distance between two pipes
+        new Level { name = "Easy",   gap = 5.4f, spacing = 7.6f, baseSpeed = 3.8f, maxSpeed = 5.2f, gain = 0.030f },
+        new Level { name = "Medium", gap = 4.9f, spacing = 6.8f, baseSpeed = 4.4f, maxSpeed = 6.0f, gain = 0.035f },
+        new Level { name = "Hard",   gap = 4.3f, spacing = 6.2f, baseSpeed = 5.0f, maxSpeed = 6.8f, gain = 0.040f },
+    };
+    static Level Lv = Levels[1];
+    static float GapH { get { return Lv.gap; } }
+    static float PipeSpacing { get { return Lv.spacing; } }
+    static float BaseSpeed { get { return Lv.baseSpeed; } }
+    static float MaxSpeed { get { return Lv.maxSpeed; } }
+    static float SpeedGain { get { return Lv.gain; } }
+    int level = 1;   // chosen in the menu (0 easy, 1 medium, 2 hard)
+    int playingLevel = 1;
+
+    // ------------------------------------------------------------ stars and shield
+    const int StarPool = 16;
+    const int StarPoints = 2;        // every star is worth 2 points
+    const int StarsForShield = 5;    // every 5 stars give a shield that saves one crash
 
     static float Speed(float t)
     {
@@ -66,11 +85,40 @@ public class OurGame : MonoBehaviour
         uint h = (uint)(seed * 73856093) ^ (uint)(i * 19349663 + 17);
         h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
         float r = (h & 0xFFFF) / 65535f;
-        return Mathf.Lerp(-2.3f, 2.3f, r);
+        float range = Mathf.Min(2.4f, 4.55f - Lv.gap * 0.5f);
+        return Mathf.Lerp(-range, range, r);
+    }
+
+    float H01(int a, int b)
+    {
+        uint h = (uint)(seed * 73856093) ^ (uint)(a * 19349663 + b * 83492791 + 12345);
+        h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+        return (h & 0xFFFF) / 65535f;
+    }
+
+    // Star ids: 2*i is the star inside the gap of pipe i, 2*i+1 sits between pipe i and i+1.
+    bool StarAt(int id, out float sx, out float sy)
+    {
+        sx = 0f; sy = 0f;
+        if (id < 0) return false;
+        int i = id >> 1;
+        if ((id & 1) == 0)
+        {
+            if (H01(i, 11) > 0.55f) return false;
+            sx = FirstPipeX + i * PipeSpacing;
+            sy = GapCenter(i) + (H01(i, 12) - 0.5f) * GapH * 0.45f;
+        }
+        else
+        {
+            if (H01(i, 21) > 0.45f) return false;
+            sx = FirstPipeX + i * PipeSpacing + PipeSpacing * 0.5f;
+            sy = Mathf.Lerp(-2.8f, 2.8f, H01(i, 22));
+        }
+        return true;
     }
 
     // ------------------------------------------------------------ state
-    enum State { Menu, Hosting, Joining, Round, Result }
+    enum State { Who, Menu, Hosting, Joining, Round, Result }
     State state = State.Menu;
 
     bool online;
@@ -98,13 +146,25 @@ public class OurGame : MonoBehaviour
         public SpriteRenderer sr;
         public Sprite idle, flap, dead;
         public float y, vy, drift, flapUntil, deathT, targetY;
-        public int score;
+        public int score, bonus, stars;
         public bool alive = true;
+        public bool shield;
+        public float invulnUntil;
+        public SpriteRenderer bubble;
     }
 
     Bird mustafa, doha;
-    Bird Me { get { return (iAmHost || !online) ? mustafa : doha; } }
-    Bird Other { get { return Me == mustafa ? doha : mustafa; } }
+
+    // Who am I? Chosen on the first screen. Doha and Mustafa are always different players:
+    // the host's choice wins and the guest automatically gets the other name.
+    const int IdDoha = 0, IdMustafa = 1;
+    int myId = IdMustafa;
+    int myLook;                      // my Doha colour (used when I am Doha)
+    string pendingRoom;              // room code from an invite link, joined after choosing a name
+    string MyName { get { return myId == IdDoha ? "Doha" : "Mustafa"; } }
+    string PartnerName { get { return myId == IdDoha ? "Mustafa" : "Doha"; } }
+    Bird Me { get { return myId == IdDoha ? doha : mustafa; } }
+    Bird Other { get { return myId == IdDoha ? mustafa : doha; } }
 
     class PipeView
     {
@@ -114,6 +174,16 @@ public class OurGame : MonoBehaviour
     }
     readonly List<PipeView> pipes = new List<PipeView>();
     const int PoolSize = 8;
+
+    class StarView { public SpriteRenderer sr; public int id = -1; }
+    readonly List<StarView> starViews = new List<StarView>();
+    readonly HashSet<int> collected = new HashSet<int>();
+    Sprite starSprite, bubbleSprite;
+    Text hudInfo;
+    Text[] popTexts = new Text[6];
+    float[] popBorn = new float[6];
+    float[] popDx = new float[6];
+    Image[] levelBtnImgs = new Image[3];
 
     // ------------------------------------------------------------ scene objects
     Camera cam;
@@ -157,18 +227,12 @@ public class OurGame : MonoBehaviour
         BuildWorld();
         BuildUi();
 
-        // Opened through a friend's invite link (?room=1234): jump straight to joining.
+        // Opened through a friend's invite link (?room=1234): remember the code, join it right after
+        // you have said who you are.
         string r = PeerNet.UrlParam("room");
-        if (!string.IsNullOrEmpty(r) && r.Length == 4 && IsDigits(r))
-        {
-            joinCode = r;
-            GoJoin();
-            TryJoin();
-        }
-        else
-        {
-            SetState(State.Menu);
-        }
+        if (!string.IsNullOrEmpty(r) && r.Length == 4 && IsDigits(r)) pendingRoom = r;
+        RefreshIdentityUi();
+        SetState(State.Who);
     }
 
     static bool IsDigits(string s)
@@ -187,10 +251,15 @@ public class OurGame : MonoBehaviour
         pipeBodySprite = ProcArt.RoundedRect(64, 12, new Color(0.42f, 0.24f, 0.62f), new Color(0.16f, 0.05f, 0.27f), 3, 0.30f, 64f);
         pipeCapSprite = ProcArt.RoundedRect(64, 12, new Color(1f, 0.50f, 0.70f), new Color(0.16f, 0.05f, 0.27f), 3, 0.22f, 64f);
 
+        starSprite = ProcArt.Star(128);
+        bubbleSprite = ProcArt.Bubble(256);
+        level = Mathf.Clamp(PlayerPrefs.GetInt("ofg_level", 1), 0, Levels.Length - 1);
+
         mustafa = new Bird { name = "Mustafa", idle = birdIdle, flap = birdFlap, dead = birdDead };
         doha = new Bird { name = "Doha" };
-        dohaStyle = Mathf.Clamp(PlayerPrefs.GetInt("ofg_doha_style", 0), 0, ProcArt.Styles.Length - 1);
-        ApplyDohaStyle(dohaStyle, false);
+        myLook = Mathf.Clamp(PlayerPrefs.GetInt("ofg_doha_style", 0), 0, ProcArt.Styles.Length - 1);
+        myId = Mathf.Clamp(PlayerPrefs.GetInt("ofg_who", IdMustafa), 0, 1);   // last time's choice is pre-selected
+        ApplyDohaStyle(myLook, false);
     }
 
     // ---- Doha's look (she picks it in the menu; the host receives it when she joins) ----
@@ -226,9 +295,14 @@ public class OurGame : MonoBehaviour
     }
 
     Image swatchRing;
+    readonly List<GameObject> swatchObjs = new List<GameObject>();
+    RectTransform whoP;
+    Image[] whoCards = new Image[2];
+    Text switchLabel, hostTell, joinPrompt;
 
     void PickStyle(int i)
     {
+        myLook = i;
         PlayerPrefs.SetInt("ofg_doha_style", i);
         PlayerPrefs.Save();
         ApplyDohaStyle(i, false);
@@ -236,7 +310,7 @@ public class OurGame : MonoBehaviour
         MoveRing(i);
     }
 
-    Vector2 SwatchPos(int i) { return new Vector2(130 + (i - (ProcArt.Styles.Length - 1) * 0.5f) * 50f, 4f); }
+    Vector2 SwatchPos(int i) { return new Vector2(-130 + (i - (ProcArt.Styles.Length - 1) * 0.5f) * 50f, 4f); }
 
     void MoveRing(int i)
     {
@@ -254,6 +328,16 @@ public class OurGame : MonoBehaviour
         bgSr.sortingOrder = -100;
 
         for (int i = 0; i < PoolSize; i++) pipes.Add(MakePipe());
+        for (int i = 0; i < StarPool; i++)
+        {
+            var sg = new GameObject("Star");
+            sg.transform.SetParent(worldRoot, false);
+            var ssr = sg.AddComponent<SpriteRenderer>();
+            ssr.sprite = starSprite;
+            ssr.sortingOrder = 5;
+            sg.SetActive(false);
+            starViews.Add(new StarView { sr = ssr });
+        }
 
         foreach (var b in new[] { mustafa, doha })
         {
@@ -263,6 +347,13 @@ public class OurGame : MonoBehaviour
             b.sr.sprite = b.idle;
             b.sr.sortingOrder = b == doha ? 11 : 10;
             b.go.transform.localScale = Vector3.one * 0.26f;
+
+            var bubble = new GameObject(b.name + " shield");
+            bubble.transform.SetParent(worldRoot, false);
+            b.bubble = bubble.AddComponent<SpriteRenderer>();
+            b.bubble.sprite = bubbleSprite;
+            b.bubble.sortingOrder = 12;
+            bubble.SetActive(false);
         }
     }
 
@@ -307,6 +398,7 @@ public class OurGame : MonoBehaviour
         var ct = cgo.transform;
 
         decoP = UiKit.Panel(ct, "Deco");
+        whoP = UiKit.Panel(ct, "Who");
         menuP = UiKit.Panel(ct, "Menu");
         hostP = UiKit.Panel(ct, "Host");
         joinP = UiKit.Panel(ct, "Join");
@@ -315,6 +407,7 @@ public class OurGame : MonoBehaviour
         resultP = UiKit.Panel(ct, "Result");
 
         BuildDeco();
+        BuildWho();
         BuildMenu();
         BuildHost();
         BuildJoin();
@@ -364,18 +457,19 @@ public class OurGame : MonoBehaviour
         UiKit.Label(menuP, "Our First Game", 120, Color.white, new Vector2(0, 292), new Vector2(900, 130));
 
         // Mustafa & Doha, flanked by hearts.
-        UiKit.Label(menuP, "Mustafa & Doha", 62, new Color(1f, 0.78f, 0.88f), new Vector2(0, 208), new Vector2(560, 80));
+        UiKit.Label(menuP, "Doha & Mustafa", 62, new Color(1f, 0.78f, 0.88f), new Vector2(0, 208), new Vector2(560, 80));
         UiKit.Pic(menuP, UiKit.HeartSprite, new Vector2(-285, 208), new Vector2(52, 52));
         UiKit.Pic(menuP, UiKit.HeartSprite, new Vector2(285, 208), new Vector2(52, 52));
 
-        menuBirdA = UiKit.Pic(menuP, mustafa.idle, new Vector2(-130, 118), new Vector2(130, 130));
-        menuBirdB = UiKit.Pic(menuP, doha.idle, new Vector2(130, 118), new Vector2(130, 130));
-        UiKit.Label(menuP, "Mustafa", 30, new Color(0.75f, 1f, 0.55f), new Vector2(-130, 48), new Vector2(240, 38));
-        UiKit.Label(menuP, "Doha", 30, new Color(1f, 0.62f, 0.82f), new Vector2(130, 48), new Vector2(240, 38));
+        menuBirdA = UiKit.Pic(menuP, mustafa.idle, new Vector2(130, 118), new Vector2(130, 130));   // Mustafa (right)
+        menuBirdB = UiKit.Pic(menuP, doha.idle, new Vector2(-130, 118), new Vector2(130, 130));     // Doha (left, first)
+        UiKit.Label(menuP, "Doha", 30, new Color(1f, 0.62f, 0.82f), new Vector2(-130, 48), new Vector2(240, 38));
+        UiKit.Label(menuP, "Mustafa", 30, new Color(0.75f, 1f, 0.55f), new Vector2(130, 48), new Vector2(240, 38));
 
         // Doha picks her look here.
         var circle = ProcArt.Circle(64, Color.white, new Color(0.16f, 0.05f, 0.27f), 4, 100f);
-        swatchRing = UiKit.Pic(menuP, circle, SwatchPos(dohaStyle), new Vector2(50, 50), Color.white);
+        swatchRing = UiKit.Pic(menuP, circle, SwatchPos(myLook), new Vector2(50, 50), Color.white);
+        swatchObjs.Add(swatchRing.gameObject);
         for (int i = 0; i < ProcArt.Styles.Length; i++)
         {
             int idx = i;
@@ -390,20 +484,34 @@ public class OurGame : MonoBehaviour
             img.color = ProcArt.Styles[i].swatch;
             go.GetComponent<Button>().targetGraphic = img;
             go.GetComponent<Button>().onClick.AddListener(() => PickStyle(idx));
+            swatchObjs.Add(go);
         }
 
-        UiKit.Btn(menuP, "Create Room", Pink, new Vector2(0, -72), new Vector2(520, 82), StartHosting);
-        UiKit.Btn(menuP, "Join Room", Purple, new Vector2(0, -164), new Vector2(520, 82), GoJoin);
-        UiKit.Btn(menuP, "Play Solo", Teal, new Vector2(0, -256), new Vector2(520, 82), StartSolo);
+        // difficulty: the host's choice is used for the whole room
+        for (int i = 0; i < Levels.Length; i++)
+        {
+            int lv = i;
+            var lb = UiKit.Btn(menuP, Levels[i].name, Color.white, new Vector2((i - 1) * 172f, -50f), new Vector2(160, 52), () => PickLevel(lv), 28);
+            levelBtnImgs[i] = lb.GetComponent<Image>();
+        }
+        RefreshLevelButtons();
+
+        // who am I (tap to go back to the name screen)
+        var sw = UiKit.Btn(menuP, "", new Color(0.45f, 0.40f, 0.60f, 0.92f), new Vector2(130, -42), new Vector2(240, 52), SwitchPlayer, 24, new Vector2(0f, 1f));
+        switchLabel = sw.GetComponentInChildren<Text>();
+
+        UiKit.Btn(menuP, "Create Room", Pink, new Vector2(0, -122), new Vector2(520, 76), StartHosting, 42);
+        UiKit.Btn(menuP, "Join Room", Purple, new Vector2(0, -206), new Vector2(520, 76), GoJoin, 42);
+        UiKit.Btn(menuP, "Play Solo", Teal, new Vector2(0, -290), new Vector2(520, 76), StartSolo, 42);
 
         UiKit.Label(menuP, "Based on Flappy Bird Unity by Abhiraj (MIT)", 22, new Color(1, 1, 1, 0.7f),
-            new Vector2(0, -332), new Vector2(800, 34), TextAnchor.MiddleCenter, false, true);
+            new Vector2(0, -343), new Vector2(800, 32), TextAnchor.MiddleCenter, false, true);
     }
 
     void BuildHost()
     {
         UiKit.Label(hostP, "Create Room", 80, Color.white, new Vector2(0, 285), new Vector2(800, 110));
-        UiKit.Label(hostP, "Tell Doha this code:", 38, Cream, new Vector2(0, 195), new Vector2(800, 60), TextAnchor.MiddleCenter, false);
+        hostTell = UiKit.Label(hostP, "Tell your friend this code:", 38, Cream, new Vector2(0, 195), new Vector2(800, 60), TextAnchor.MiddleCenter, false);
         hostCode = UiKit.Label(hostP, "----", 170, new Color(1f, 0.85f, 0.4f), new Vector2(0, 70), new Vector2(700, 190));
         hostLink = UiKit.Label(hostP, "", 24, Cream, new Vector2(0, -50), new Vector2(900, 60), TextAnchor.MiddleCenter, false);
         hostStatus = UiKit.Label(hostP, "Connecting...", 40, Color.white, new Vector2(0, -125), new Vector2(900, 70), TextAnchor.MiddleCenter, false);
@@ -417,7 +525,7 @@ public class OurGame : MonoBehaviour
     void BuildJoin()
     {
         UiKit.Label(joinP, "Join Room", 80, Color.white, new Vector2(0, 300), new Vector2(800, 110));
-        UiKit.Label(joinP, "Enter Mustafa's 4 digit code", 34, Cream, new Vector2(0, 232), new Vector2(900, 50), TextAnchor.MiddleCenter, false);
+        joinPrompt = UiKit.Label(joinP, "Enter your friend's 4 digit code", 34, Cream, new Vector2(0, 232), new Vector2(900, 50), TextAnchor.MiddleCenter, false);
         joinCodeText = UiKit.Label(joinP, "_ _ _ _", 120, new Color(1f, 0.85f, 0.4f), new Vector2(0, 150), new Vector2(700, 140));
         joinStatus = UiKit.Label(joinP, "", 32, Color.white, new Vector2(0, -312), new Vector2(1000, 50), TextAnchor.MiddleCenter, false);
 
@@ -436,8 +544,17 @@ public class OurGame : MonoBehaviour
     void BuildHud()
     {
         hudScore = UiKit.LabelAt(hudP, "0", 110, Color.white, new Vector2(0.5f, 1f), new Vector2(0, -75), new Vector2(400, 130));
-        hudLeft = UiKit.LabelAt(hudP, "", 34, new Color(0.7f, 1f, 0.5f), new Vector2(0f, 1f), new Vector2(190, -40), new Vector2(360, 52), TextAnchor.MiddleLeft);
-        hudRight = UiKit.LabelAt(hudP, "", 34, new Color(1f, 0.6f, 0.8f), new Vector2(1f, 1f), new Vector2(-190, -40), new Vector2(360, 52), TextAnchor.MiddleRight);
+        hudLeft = UiKit.LabelAt(hudP, "", 34, new Color(1f, 0.6f, 0.8f), new Vector2(0f, 1f), new Vector2(190, -40), new Vector2(360, 52), TextAnchor.MiddleLeft);
+        hudRight = UiKit.LabelAt(hudP, "", 34, new Color(0.7f, 1f, 0.5f), new Vector2(1f, 1f), new Vector2(-190, -40), new Vector2(360, 52), TextAnchor.MiddleRight);
+
+        // level / stars / shield line under the score
+        hudInfo = UiKit.LabelAt(hudP, "", 28, Color.white, new Vector2(0.5f, 1f), new Vector2(0, -158), new Vector2(900, 40), TextAnchor.MiddleCenter, false);
+        for (int i = 0; i < popTexts.Length; i++)
+        {
+            var pt = UiKit.Label(hudP, "", 40, new Color(1f, 0.92f, 0.4f), Vector2.zero, new Vector2(360, 54));
+            pt.gameObject.SetActive(false);
+            popTexts[i] = pt;
+        }
 
         // name tags that follow the birds
         nameMustafa = UiKit.Label(hudP, "Mustafa", 30, new Color(0.75f, 1f, 0.55f), Vector2.zero, new Vector2(240, 40));
@@ -471,8 +588,9 @@ public class OurGame : MonoBehaviour
     void SetState(State s)
     {
         state = s;
-        bool menuLike = s == State.Menu || s == State.Hosting || s == State.Joining;
+        bool menuLike = s == State.Who || s == State.Menu || s == State.Hosting || s == State.Joining;
         decoP.gameObject.SetActive(menuLike || s == State.Result);
+        whoP.gameObject.SetActive(s == State.Who);
         menuP.gameObject.SetActive(s == State.Menu);
         hostP.gameObject.SetActive(s == State.Hosting);
         joinP.gameObject.SetActive(s == State.Joining);
@@ -481,9 +599,14 @@ public class OurGame : MonoBehaviour
         resultP.gameObject.SetActive(s == State.Result);
         bool showWorld = s == State.Round || s == State.Result;
         foreach (var p in pipes) if (!showWorld) p.root.gameObject.SetActive(false);
-        mustafa.go.SetActive(showWorld);
-        doha.go.SetActive(showWorld && online);
-        if (!showWorld && s == State.Menu) { }
+        if (!showWorld)
+        {
+            // the birds are switched on again by RenderBird (only the ones that are playing)
+            mustafa.go.SetActive(false);
+            doha.go.SetActive(false);
+            if (mustafa.bubble != null) mustafa.bubble.gameObject.SetActive(false);
+            if (doha.bubble != null) doha.bubble.gameObject.SetActive(false);
+        }
     }
 
     void ToMenu()
@@ -500,7 +623,7 @@ public class OurGame : MonoBehaviour
     {
         online = false;
         iAmHost = true;
-        BeginRound(Random.Range(1, 1000000));
+        BeginRound(Random.Range(1, 1000000), level);
     }
 
     static string RandomCode()
@@ -517,6 +640,7 @@ public class OurGame : MonoBehaviour
         roomCode = RandomCode();
         PeerNet.Start(true, roomCode);
         SetState(State.Hosting);
+        hostTell.text = "Tell " + PartnerName + " this code:";
         if (hostRetryBtn != null) hostRetryBtn.SetActive(false);
         RefreshHostTexts();
     }
@@ -532,6 +656,82 @@ public class OurGame : MonoBehaviour
         string link = PeerNet.PageUrl() + "?room=" + roomCode;
         bool ok = PeerNet.CopyText(link);
         Toast(ok ? "Invite link copied!" : "Send Doha the code above");
+    }
+
+    void BuildWho()
+    {
+        UiKit.Label(whoP, "Who are you?", 100, Color.white, new Vector2(0, 268), new Vector2(900, 130));
+        UiKit.Label(whoP, "Pick your name - your friend plays the other one", 30, Cream, new Vector2(0, 190), new Vector2(900, 44), TextAnchor.MiddleCenter, false);
+        whoCards[IdDoha] = UiKit.Pic(whoP, doha.idle, new Vector2(-150, 58), new Vector2(190, 190));
+        whoCards[IdMustafa] = UiKit.Pic(whoP, mustafa.idle, new Vector2(150, 58), new Vector2(190, 190));
+        UiKit.Btn(whoP, "I'm Doha", Pink, new Vector2(-150, -92), new Vector2(270, 84), () => ChooseIdentity(IdDoha), 40);
+        UiKit.Btn(whoP, "I'm Mustafa", new Color(0.35f, 0.72f, 0.30f), new Vector2(150, -92), new Vector2(270, 84), () => ChooseIdentity(IdMustafa), 40);
+        UiKit.Label(whoP, "Doha & Mustafa", 46, new Color(1f, 0.78f, 0.88f), new Vector2(0, -222), new Vector2(700, 64));
+    }
+
+    void ChooseIdentity(int id)
+    {
+        myId = id;
+        PlayerPrefs.SetInt("ofg_who", id);
+        PlayerPrefs.Save();
+        if (id == IdDoha) ApplyDohaStyle(myLook, false);
+        RefreshIdentityUi();
+        if (!string.IsNullOrEmpty(pendingRoom))
+        {
+            // came from an invite link: go straight into that room
+            joinCode = pendingRoom;
+            pendingRoom = null;
+            GoJoin();
+            TryJoin();
+        }
+        else
+        {
+            SetState(State.Menu);
+        }
+    }
+
+    void SwitchPlayer()
+    {
+        SetState(State.Who);
+    }
+
+    void RefreshIdentityUi()
+    {
+        if (switchLabel != null) switchLabel.text = "I'm " + MyName + "  (change)";
+        // only Doha has a colour to pick
+        foreach (var o in swatchObjs) if (o != null) o.SetActive(myId == IdDoha);
+        // the card of the name you used last time is a little bigger
+        for (int i = 0; i < whoCards.Length; i++)
+            if (whoCards[i] != null) whoCards[i].rectTransform.localScale = i == myId ? Vector3.one * 1.1f : Vector3.one;
+    }
+
+    static readonly Color[] LevelColors =
+    {
+        new Color(0.30f, 0.72f, 0.40f), new Color(0.98f, 0.62f, 0.20f), new Color(0.90f, 0.28f, 0.34f)
+    };
+
+    void PickLevel(int i)
+    {
+        level = Mathf.Clamp(i, 0, Levels.Length - 1);
+        PlayerPrefs.SetInt("ofg_level", level);
+        PlayerPrefs.Save();
+        RefreshLevelButtons();
+    }
+
+    void RefreshLevelButtons()
+    {
+        for (int i = 0; i < levelBtnImgs.Length; i++)
+        {
+            if (levelBtnImgs[i] == null) continue;
+            Color c = LevelColors[i];
+            levelBtnImgs[i].color = i == level ? c : new Color(c.r * 0.55f, c.g * 0.55f, c.b * 0.55f, 0.85f);
+            levelBtnImgs[i].rectTransform.localScale = i == level ? Vector3.one * 1.08f : Vector3.one;
+        }
+    }
+
+    static void ApplyLevel(int i)
+    {
+        Lv = Levels[Mathf.Clamp(i, 0, Levels.Length - 1)];
     }
 
     // Native share sheet (WhatsApp...) opens on top of the game, so the page is not left.
@@ -550,6 +750,7 @@ public class OurGame : MonoBehaviour
         joinWaiting = false;
         helloSent = false;
         SetState(State.Joining);
+        joinPrompt.text = "Enter " + PartnerName + "'s 4 digit code";
         RefreshJoinCode();
         joinStatus.text = "";
     }
@@ -584,15 +785,22 @@ public class OurGame : MonoBehaviour
     {
         b.y = 0; b.vy = 0; b.drift = 0; b.score = 0; b.alive = true; b.deathT = 0;
         b.flapUntil = 0; b.targetY = 0;
+        b.bonus = 0; b.stars = 0; b.shield = false; b.invulnUntil = 0;
+        b.sr.color = Color.white;
+        if (b.bubble != null) b.bubble.gameObject.SetActive(false);
         b.sr.sprite = b.idle;
         b.go.transform.rotation = Quaternion.identity;
     }
 
-    void BeginRound(int s)
+    void BeginRound(int s, int lv)
     {
         seed = s;
+        playingLevel = Mathf.Clamp(lv, 0, Levels.Length - 1);
+        ApplyLevel(lv);
+        collected.Clear();
+        for (int i = 0; i < popTexts.Length; i++) if (popTexts[i] != null) popTexts[i].gameObject.SetActive(false);
         startAt = Time.unscaledTime + CountdownSecs;
-        if (online) ApplyDohaStyle(dohaStyle, true); // build all of her frames before the round starts
+        if (online || myId == IdDoha) ApplyDohaStyle(dohaStyle, true); // build all of her frames before the round starts
         ResetBird(mustafa);
         ResetBird(doha);
         otherLeft = false;
@@ -603,8 +811,8 @@ public class OurGame : MonoBehaviour
         otherLastMsg = Time.unscaledTime;
         SetState(State.Round);
         banner.SetActive(false);
-        hudLeft.text = online ? (iAmHost ? "Mustafa (you)" : "Mustafa") : "";
-        hudRight.text = online ? (iAmHost ? "Doha" : "Doha (you)") : "";
+        hudLeft.text = online ? (myId == IdDoha ? "Doha (you)" : "Doha") : "";
+        hudRight.text = online ? (myId == IdMustafa ? "Mustafa (you)" : "Mustafa") : "";
         hudScore.text = "0";
         countP.gameObject.SetActive(true);
     }
@@ -620,12 +828,13 @@ public class OurGame : MonoBehaviour
                 return;
             }
             int s = Random.Range(1, 1000000);
-            PeerNet.Send("S|" + s.ToString(CultureInfo.InvariantCulture));
-            BeginRound(s);
+            PeerNet.Send("S|" + s.ToString(CultureInfo.InvariantCulture) + "|" + level.ToString(CultureInfo.InvariantCulture) +
+                         "|" + myId.ToString(CultureInfo.InvariantCulture) + "|" + dohaStyle.ToString(CultureInfo.InvariantCulture));
+            BeginRound(s, level);
         }
         else
         {
-            BeginRound(Random.Range(1, 1000000));
+            BeginRound(Random.Range(1, 1000000), level);
         }
     }
 
@@ -698,8 +907,8 @@ public class OurGame : MonoBehaviour
     {
         if (menuBirdA == null) return;
         float t = Time.unscaledTime;
-        menuBirdA.rectTransform.anchoredPosition = new Vector2(-130, 118 + Mathf.Sin(t * 2.2f) * 10f);
-        menuBirdB.rectTransform.anchoredPosition = new Vector2(130, 118 + Mathf.Sin(t * 2.2f + 1.6f) * 10f);
+        menuBirdA.rectTransform.anchoredPosition = new Vector2(130, 118 + Mathf.Sin(t * 2.2f) * 10f);
+        menuBirdB.rectTransform.anchoredPosition = new Vector2(-130, 118 + Mathf.Sin(t * 2.2f + 1.6f) * 10f);
         menuBirdA.rectTransform.localRotation = Quaternion.Euler(0, 0, Mathf.Sin(t * 2.2f) * 6f);
         menuBirdB.rectTransform.localRotation = Quaternion.Euler(0, 0, Mathf.Sin(t * 2.2f + 1.6f) * 6f);
     }
@@ -726,14 +935,30 @@ public class OurGame : MonoBehaviour
                 case "H": // guest says hello -> host starts the first round
                     if (iAmHost && state == State.Hosting)
                     {
-                        if (p.Length > 2) dohaStyle = Mathf.Clamp(I(p[2]), 0, ProcArt.Styles.Length - 1); // Doha's chosen look
+                        // the guest sends "H|<wanted name>|<colour>"; the host always keeps its own name
+                        int gLook = p.Length > 2 ? Mathf.Clamp(I(p[2]), 0, ProcArt.Styles.Length - 1) : 0;
+                        dohaStyle = myId == IdDoha ? myLook : gLook;      // whoever plays Doha decides her colour
                         int s = Random.Range(1, 1000000);
-                        PeerNet.Send("S|" + s.ToString(CultureInfo.InvariantCulture));
-                        BeginRound(s);
+                        PeerNet.Send("S|" + s.ToString(CultureInfo.InvariantCulture) + "|" + level.ToString(CultureInfo.InvariantCulture) +
+                                     "|" + myId.ToString(CultureInfo.InvariantCulture) + "|" + dohaStyle.ToString(CultureInfo.InvariantCulture));
+                        BeginRound(s, level);
                     }
                     break;
                 case "S": // host starts a round
-                    if (!iAmHost) BeginRound(I(p[1]));
+                    if (!iAmHost)
+                    {
+                        int hostId = p.Length > 3 ? Mathf.Clamp(I(p[3]), 0, 1) : IdMustafa;
+                        if (p.Length > 4) dohaStyle = Mathf.Clamp(I(p[4]), 0, ProcArt.Styles.Length - 1);
+                        if (myId == hostId)
+                        {
+                            string taken = hostId == IdDoha ? "Doha" : "Mustafa";
+                            string mine = hostId == IdDoha ? "Mustafa" : "Doha";
+                            Toast(taken + " is already taken - you play as " + mine);
+                        }
+                        myId = 1 - hostId;
+                        RefreshIdentityUi();
+                        BeginRound(I(p[1]), p.Length > 2 ? I(p[2]) : 1);
+                    }
                     break;
                 case "P": // opponent state: P|seed|y|vy|score|alive
                     {
@@ -744,6 +969,7 @@ public class OurGame : MonoBehaviour
                         float ovy = F(p[3]);
                         o.score = I(p[4]);
                         if (ovy > FlapV - 1.5f) o.flapUntil = Time.unscaledTime + 0.15f;
+                        if (p.Length > 6) o.shield = p[6] == "1";
                         if (p[5] == "0" && o.alive) KillOther(o);
                         break;
                     }
@@ -795,7 +1021,7 @@ public class OurGame : MonoBehaviour
                 hostRetryBtn.SetActive(true);
                 break;
             case PeerNet.Status.Hosting:
-                hostStatus.text = "Waiting for Doha" + Dots();
+                hostStatus.text = "Waiting for " + PartnerName + Dots();
                 hostRetryBtn.SetActive(false);
                 break;
             case PeerNet.Status.Reconnecting:
@@ -803,10 +1029,10 @@ public class OurGame : MonoBehaviour
                 hostStatus.text = "Reaching the room server" + Dots() + " " + Describe(PeerNet.Error);
                 break;
             case PeerNet.Status.Connected:
-                hostStatus.text = "Doha is here! Starting...";
+                hostStatus.text = PartnerName + " is here! Starting...";
                 break;
             case PeerNet.Status.Closed:
-                hostStatus.text = "Doha left. Waiting" + Dots();
+                hostStatus.text = PartnerName + " left. Waiting" + Dots();
                 break;
             default:
                 hostStatus.text = "Connecting to the server" + Dots();
@@ -842,11 +1068,11 @@ public class OurGame : MonoBehaviour
         switch (PeerNet.Current)
         {
             case PeerNet.Status.Connected:
-                if (!helloSent) { PeerNet.Send("H|Doha|" + dohaStyle.ToString(CultureInfo.InvariantCulture)); helloSent = true; }
-                joinStatus.text = "Connected! Waiting for Mustafa to start" + Dots();
+                if (!helloSent) { PeerNet.Send("H|" + myId.ToString(CultureInfo.InvariantCulture) + "|" + myLook.ToString(CultureInfo.InvariantCulture)); helloSent = true; }
+                joinStatus.text = "Connected! Waiting for " + PartnerName + " to start" + Dots();
                 break;
             case PeerNet.Status.NotFound:
-                Toast("Room not found. Check the code");
+                Toast(PeerNet.Error == "full" ? "That room already has two players" : "Room not found. Check the code");
                 joinWaiting = false;
                 PeerNet.Close();
                 joinStatus.text = "";
@@ -950,7 +1176,7 @@ public class OurGame : MonoBehaviour
             {
                 nextSend = Time.unscaledTime + SendInterval;
                 PeerNet.Send("P|" + seed.ToString(CultureInfo.InvariantCulture) + "|" + me.y.ToString("F2", CultureInfo.InvariantCulture) + "|" +
-                             me.vy.ToString("F1", CultureInfo.InvariantCulture) + "|" + me.score + "|" + (me.alive ? "1" : "0"));
+                             me.vy.ToString("F1", CultureInfo.InvariantCulture) + "|" + me.score + "|" + (me.alive ? "1" : "0") + "|" + (me.shield ? "1" : "0"));
             }
         }
 
@@ -973,8 +1199,83 @@ public class OurGame : MonoBehaviour
         me.vy = Mathf.Max(me.vy - Gravity * Step, MaxFall);
         me.y += me.vy * Step;
         if (me.y > CeilY) { me.y = CeilY; if (me.vy > 0f) me.vy = 0f; }
-        me.score = ScoreAt(Dist(tt));
-        if (me.y < FloorY || HitsPipe(tt, me.y)) Die(me, tt);
+        float d = Dist(tt);
+        CollectStars(me, d);
+        me.score = ScoreAt(d) + me.bonus;
+
+        bool hit = me.y < FloorY || HitsPipe(tt, me.y);
+        if (!hit) return;
+        if (tt < me.invulnUntil)
+        {
+            // still protected after the shield popped: slide through, but never fall out of the world
+            if (me.y < FloorY) { me.y = FloorY; if (me.vy < 0f) me.vy = 0f; }
+            return;
+        }
+        if (me.shield)
+        {
+            me.shield = false;
+            me.invulnUntil = tt + 1.3f;
+            me.vy = FlapV;
+            if (me.y < FloorY) me.y = FloorY;
+            Pop("Shield saved you!");
+            return;
+        }
+        Die(me, tt);
+    }
+
+    // Stars are the same for both players (they come from the round's seed), but each player
+    // collects them on their own: +2 points each, and every 5 stars give a shield.
+    void CollectStars(Bird me, float d)
+    {
+        int iMin = Mathf.Max(0, Mathf.FloorToInt((d - FirstPipeX) / PipeSpacing));
+        int from = Mathf.Max(0, (iMin - 1) * 2), to = (iMin + 2) * 2 + 1;
+        for (int id = from; id <= to; id++)
+        {
+            if (collected.Contains(id)) continue;
+            float sx, sy;
+            if (!StarAt(id, out sx, out sy)) continue;
+            float dx = sx - d, dy = sy - me.y;
+            if (dx * dx + dy * dy > 0.75f * 0.75f) continue;
+            collected.Add(id);
+            me.stars++;
+            me.bonus += StarPoints;
+            if (me.stars % StarsForShield == 0) { me.shield = true; Pop("Shield!"); }
+            else Pop("+" + StarPoints);
+        }
+    }
+
+    void Pop(string text)
+    {
+        int slot = 0;
+        float oldest = float.MaxValue;
+        for (int i = 0; i < popTexts.Length; i++)
+        {
+            if (popTexts[i] == null) continue;
+            if (!popTexts[i].gameObject.activeSelf) { slot = i; oldest = -1f; break; }
+            if (popBorn[i] < oldest) { oldest = popBorn[i]; slot = i; }
+        }
+        if (popTexts[slot] == null) return;
+        popTexts[slot].text = text;
+        popTexts[slot].gameObject.SetActive(true);
+        popBorn[slot] = Time.unscaledTime;
+    }
+
+    void PlacePops(Bird me)
+    {
+        for (int i = 0; i < popTexts.Length; i++)
+        {
+            var pt = popTexts[i];
+            if (pt == null || !pt.gameObject.activeSelf) continue;
+            float age = Time.unscaledTime - popBorn[i];
+            if (age > 0.9f) { pt.gameObject.SetActive(false); continue; }
+            Vector3 sp = cam.WorldToScreenPoint(new Vector3(me.go.transform.position.x, me.y + 1.0f + age * 1.4f, 0f));
+            Vector2 lp;
+            if (RectTransformUtility.ScreenPointToLocalPointInRectangle((RectTransform)canvas.transform, sp, null, out lp))
+                pt.rectTransform.anchoredPosition = lp;
+            var c = pt.color;
+            c.a = 1f - age / 0.9f;
+            pt.color = c;
+        }
     }
 
     void FallStep(Bird b, float tt)
@@ -1033,8 +1334,36 @@ public class OurGame : MonoBehaviour
         }
         foreach (var p in pipes) p.root.gameObject.SetActive(p.index >= 0);
 
-        RenderBird(mustafa, -0.30f, t);
-        if (online) RenderBird(doha, 0.30f, t);
+        // stars that are still there
+        int used = 0;
+        int sFrom = Mathf.Max(0, iMin * 2 - 1), sTo = iMax * 2 + 1;
+        for (int id = sFrom; id <= sTo && used < starViews.Count; id++)
+        {
+            float sx, sy;
+            if (collected.Contains(id) || !StarAt(id, out sx, out sy)) continue;
+            var sv = starViews[used++];
+            sv.id = id;
+            sv.sr.gameObject.SetActive(true);
+            float bob = Mathf.Sin(Time.unscaledTime * 3f + id) * 0.10f;
+            float pulse = 0.62f + Mathf.Sin(Time.unscaledTime * 5f + id) * 0.04f;
+            sv.sr.transform.position = new Vector3(sx - d, sy + bob, 0f);
+            sv.sr.transform.localScale = Vector3.one * pulse;
+            sv.sr.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Sin(Time.unscaledTime * 2f + id) * 12f);
+        }
+        for (int k = used; k < starViews.Count; k++) starViews[k].sr.gameObject.SetActive(false);
+
+        // together: Doha on the left, Mustafa on the right. Alone: just my bird in the middle.
+        if (online)
+        {
+            RenderBird(doha, -0.30f, t);
+            RenderBird(mustafa, 0.30f, t);
+        }
+        else
+        {
+            RenderBird(Me, 0f, t);
+            Other.go.SetActive(false);
+            if (Other.bubble != null) Other.bubble.gameObject.SetActive(false);
+        }
     }
 
     void LayoutPipe(PipeView p, int i, float relX)
@@ -1077,12 +1406,28 @@ public class OurGame : MonoBehaviour
             ang = Mathf.Clamp(b.vy * 4f, -60f, 28f);
         }
         b.go.transform.rotation = Quaternion.Euler(0, 0, ang);
+
+        if (b.bubble != null)
+        {
+            bool show = b.alive && b.shield;
+            b.bubble.gameObject.SetActive(show);
+            if (show)
+            {
+                b.bubble.transform.position = new Vector3(visX + b.drift, b.y, 0f);
+                b.bubble.transform.localScale = Vector3.one * (0.60f + Mathf.Sin(Time.unscaledTime * 5f) * 0.03f);
+            }
+        }
+        // flash while protected after a shield saved us
+        if (b.alive && b == Me && simT < b.invulnUntil)
+            b.sr.color = new Color(1f, 1f, 1f, Mathf.Sin(Time.unscaledTime * 40f) > 0f ? 1f : 0.35f);
+        else
+            b.sr.color = Color.white;
     }
 
     // Name tag above (Mustafa) / below (Doha) a bird, so the two never overlap.
     void PlaceName(Text label, Bird b, float dy)
     {
-        bool show = b.go.activeSelf && b.alive && (b != doha || online);
+        bool show = b.go.activeSelf && b.alive;
         label.gameObject.SetActive(show);
         if (!show) return;
         Vector3 sp = cam.WorldToScreenPoint(new Vector3(b.go.transform.position.x, b.y + dy, 0f));
@@ -1096,9 +1441,9 @@ public class OurGame : MonoBehaviour
         hudScore.text = me.score.ToString(CultureInfo.InvariantCulture);
         if (online)
         {
-            Bird left = mustafa, right = doha;
-            hudLeft.text = "Mustafa" + (left == me ? " (you)" : "") + "  " + left.score;
-            hudRight.text = right.score + "  Doha" + (right == me ? " (you)" : "");
+            Bird left = doha, right = mustafa;
+            hudLeft.text = "Doha" + (left == me ? " (you)" : "") + "  " + left.score;
+            hudRight.text = right.score + "  Mustafa" + (right == me ? " (you)" : "");
         }
         else
         {
@@ -1108,6 +1453,10 @@ public class OurGame : MonoBehaviour
 
         PlaceName(nameMustafa, mustafa, 0.95f);
         PlaceName(nameDoha, doha, -0.95f);
+
+        hudInfo.text = Lv.name.ToUpper() + "     Stars " + me.stars +
+                       (me.shield ? "     SHIELD ON" : "     Shield in " + (StarsForShield - me.stars % StarsForShield));
+        PlacePops(me);
 
         bool watching = online && !me.alive && other.alive;
         banner.SetActive(watching);
@@ -1134,20 +1483,23 @@ public class OurGame : MonoBehaviour
             bool meWin = diff > 0.15f || (Mathf.Abs(diff) <= 0.15f && me.score > other.score);
             if (otherLeft) { meWin = true; tie = false; }
             resultTitle.text = tie ? "It's a tie!" : (meWin ? me.name + " wins!" : other.name + " wins!");
-            resultLine.text = "Mustafa: " + mustafa.score + "      Doha: " + doha.score;
+            resultLine.text = "Doha: " + doha.score + "      Mustafa: " + mustafa.score +
+                              "\n" + Lv.name + " level   -   your stars: " + me.stars;
             if (otherLeft) resultLine.text += "\n" + other.name + " left the game";
         }
         else
         {
-            int best = PlayerPrefs.GetInt("ofg_best", 0);
-            if (me.score > best) { best = me.score; PlayerPrefs.SetInt("ofg_best", best); PlayerPrefs.Save(); }
+            string bestKey = "ofg_best_" + playingLevel;
+            int best = PlayerPrefs.GetInt(bestKey, 0);
+            if (me.score > best) { best = me.score; PlayerPrefs.SetInt(bestKey, best); PlayerPrefs.Save(); }
             resultTitle.text = "Game over";
-            resultLine.text = "Score: " + me.score + "      Best: " + best;
+            resultLine.text = "Score: " + me.score + "      Best (" + Lv.name + "): " + best +
+                              "\nStars: " + me.stars;
         }
 
         bool canRestart = !online || iAmHost;
         playAgainBtn.SetActive(canRestart);
-        resultHint.text = canRestart ? "" : "Waiting for Mustafa to start another round...";
+        resultHint.text = canRestart ? "" : "Waiting for " + other.name + " to start another round...";
         SetState(State.Result);
         hudP.gameObject.SetActive(false);
     }

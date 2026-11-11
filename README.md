@@ -1,27 +1,28 @@
 # Our First Game
 
-A two-bird flappy race for **Mustafa & Doha** — playable in the browser on phone or PC.
+A two-bird flappy race for **Doha & Mustafa** — playable in the browser on phone or PC.
 
-- **Mustafa** is the green bird, **Doha** is the pink bird with the bow and eyelashes.
+- **Doha** is the pink bird with the bow and eyelashes (she picks her colour in the menu), **Mustafa** is the green bird.
 - **Play online together:** one of you creates a room and gets a 4 digit code (and an invite link),
   the other joins with the code. You both fly through the *same* pipes at the same time.
   Whoever crashes first keeps watching the other one fly; when both are down you see who won.
 - **Play solo** if nobody is around.
+- **Levels:** Easy / Medium / Hard (wider pipes, more space between them and slower on Easy). The level the
+  host picks is used for the whole room.
+- **Stars:** golden stars float in the gaps and between the pipes. Every star is worth **+2 points**, and every
+  **5 stars give you a shield** (a bubble around your bird) that saves you from one crash.
 - **Controls:** tap / click anywhere, or press Space / Up arrow.
 
 ## How the online mode works
 
-There is no game server. The two browsers connect directly to each other (WebRTC, through
-[PeerJS](https://peerjs.com)'s free public signalling server). Both players run the same
-deterministic pipe course from a shared seed and clock, and only send their own bird's
-position and score ~15 times a second. Because of that:
+The two players connect through a tiny **room relay** (a Cloudflare Worker, see `relay/`). Both open a
+WebSocket to the relay with the 4 digit code and the relay forwards every message to the other player, so it
+works between any two networks (home wifi, mobile data...). Both players run the same deterministic pipe course
+from a shared seed and clock, and only send their own bird's position and score ~15 times a second.
 
-- it is free to host (static files only, e.g. Vercel),
-- the 4 digit room code only has to be typed once,
-- if both players are behind very strict networks the direct connection may fail; a public
-  TURN relay is configured as a fallback, but it is a shared free service and can be slow.
-
-Scores are computed on each player's device, so this is meant for friends, not competitions.
+- the room survives the page going to the background (e.g. while you share the code on WhatsApp),
+- the game and the relay are served by the same worker, so there is nothing to configure,
+- scores are computed on each player's device, so this is meant for friends, not competitions.
 
 ## Project layout
 

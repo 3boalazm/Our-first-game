@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 using UnityEngine;
 
 /// <summary>
-/// Thin C# wrapper around PeerBridge.jslib (WebRTC data channel through PeerJS).
+/// Thin C# wrapper around PeerBridge.jslib (WebSocket relay, see /relay).
 /// In the Unity Editor / non-WebGL builds there is no network, so everything is a stub.
 /// </summary>
 public static class PeerNet

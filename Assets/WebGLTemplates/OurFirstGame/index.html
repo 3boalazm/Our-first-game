@@ -4,8 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#3a1d5a">
+    <meta name="description" content="A two-bird flappy race for Doha &amp; Mustafa.">
     <title>Our First Game</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>&#x1F496;</text></svg>">
+
+    <!-- installable app (PWA) -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Our Game">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
     <style>
       html, body {
         margin: 0; height: 100%; overflow: hidden; background: #3a1d5a;
@@ -24,17 +34,41 @@
       #bar { width: min(70vw, 420px); height: 16px; border-radius: 10px; background: rgba(255,255,255,.25); overflow: hidden; }
       #bar > div { height: 100%; width: 0%; background: #fff; border-radius: 10px; transition: width .15s; }
       #error { display: none; max-width: 80vw; background: rgba(0,0,0,.35); padding: 12px 18px; border-radius: 12px; font-size: 16px; }
+
+      /* "Install app" bubble (only shown in a browser, never inside the installed app) */
+      #install {
+        position: fixed; left: calc(12px + env(safe-area-inset-left, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+        display: none; align-items: center; gap: 8px; z-index: 5;
+        background: #ff6aa8; color: #fff; border: 3px solid #2a0d44; border-radius: 999px;
+        padding: 10px 12px 10px 16px; font: 700 16px system-ui, -apple-system, "Segoe UI", sans-serif;
+        box-shadow: 0 4px 0 rgba(40,10,60,.5); touch-action: manipulation;
+      }
+      #install button { all: unset; cursor: pointer; }
+      #install .x { opacity: .8; font-size: 20px; padding: 0 6px; }
+      #ioshint {
+        position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 5; display: none;
+        background: rgba(42,13,68,.92); color: #fff; border-radius: 16px; padding: 14px 16px;
+        font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; text-align: center;
+      }
     </style>
   </head>
   <body>
     <canvas id="unity-canvas" tabindex="-1"></canvas>
+
     <div id="loading">
       <h1>Our First Game</h1>
-      <p>&#x1F495; Mustafa &amp; Doha &#x1F495;</p>
+      <p>&#x1F495; Doha &amp; Mustafa &#x1F495;</p>
       <div id="bar"><div id="bar-fill"></div></div>
       <div id="error"></div>
     </div>
+
+    <div id="install"><button id="install-go">&#x1F4F2; Install app</button><button class="x" id="install-x" aria-label="Dismiss">&#x2715;</button></div>
+    <div id="ioshint">To install: tap <b>Share</b> <span aria-hidden="true">&#x2B06;&#xFE0F;</span> then <b>Add to Home Screen</b>.<br><button id="ioshint-x" style="all:unset;cursor:pointer;text-decoration:underline;margin-top:6px;display:inline-block">Got it</button></div>
+
     <script>
+      // Address of the room relay (Cloudflare Worker, see /relay). Leave empty when the game itself is
+      // served by that worker (same address). Otherwise use the wss:// address of the worker.
+      window.OFG_RELAY = "";
       document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
       var canvas = document.querySelector("#unity-canvas");
@@ -54,12 +88,64 @@
         devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
         showBanner: function (msg, type) { if (type === "error") { errorBox.style.display = "block"; errorBox.innerHTML = msg; } }
       };
+      var loaderUrl = buildUrl + "/{{{ LOADER_FILENAME }}}";
 
+      // ---------------------------------------------------------------- PWA
+      var isStandalone = window.matchMedia("(display-mode: standalone)").matches ||
+                         window.matchMedia("(display-mode: fullscreen)").matches ||
+                         window.navigator.standalone === true;
+
+      function remembered(k) { try { return localStorage.getItem(k) === "1"; } catch (e) { return false; } }
+      function remember(k) { try { localStorage.setItem(k, "1"); } catch (e) {} }
+
+      var swReady = null;
+      if ("serviceWorker" in navigator) {
+        swReady = navigator.serviceWorker.register("sw.js").then(function () { return navigator.serviceWorker.ready; }).catch(function () { return null; });
+      }
+
+      var deferredPrompt = null;
+      var installBox = document.querySelector("#install");
+      window.addEventListener("beforeinstallprompt", function (e) {
+        e.preventDefault();
+        deferredPrompt = e;
+        if (!isStandalone && !remembered("ofg_install_dismissed")) installBox.style.display = "flex";
+      });
+      window.addEventListener("appinstalled", function () { installBox.style.display = "none"; deferredPrompt = null; });
+      document.querySelector("#install-go").addEventListener("click", function () {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.finally(function () { deferredPrompt = null; installBox.style.display = "none"; });
+      });
+      document.querySelector("#install-x").addEventListener("click", function () { installBox.style.display = "none"; remember("ofg_install_dismissed"); });
+
+      // iPhone / iPad Safari has no install prompt: show a one-time hint.
+      var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      if (isIOS && !isStandalone && !remembered("ofg_ios_hint")) {
+        setTimeout(function () { document.querySelector("#ioshint").style.display = "block"; }, 4000);
+        document.querySelector("#ioshint-x").addEventListener("click", function () {
+          document.querySelector("#ioshint").style.display = "none"; remember("ofg_ios_hint");
+        });
+      }
+
+      // After the game has loaded, ask the service worker to keep its files for offline play.
+      function cacheForOffline() {
+        if (!swReady) return;
+        swReady.then(function (reg) {
+          var sw = (reg && reg.active) || navigator.serviceWorker.controller;
+          if (!sw) return;
+          sw.postMessage({ type: "cache-urls", urls: [
+            "./", "index.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
+            loaderUrl, config.dataUrl, config.frameworkUrl, config.codeUrl
+          ] });
+        });
+      }
+
+      // ---------------------------------------------------------------- game
       var script = document.createElement("script");
-      script.src = buildUrl + "/{{{ LOADER_FILENAME }}}";
+      script.src = loaderUrl;
       script.onload = function () {
         createUnityInstance(canvas, config, function (p) { fill.style.width = (100 * p) + "%"; })
-          .then(function () { loading.style.display = "none"; canvas.focus(); })
+          .then(function () { loading.style.display = "none"; canvas.focus(); cacheForOffline(); })
           .catch(function (m) { errorBox.style.display = "block"; errorBox.textContent = String(m); });
       };
       script.onerror = function () { errorBox.style.display = "block"; errorBox.textContent = "Could not load the game files."; };
